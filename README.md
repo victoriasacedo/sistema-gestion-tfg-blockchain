@@ -94,63 +94,105 @@ La blockchain **no almacena el PDF**, sino:
 
 ## 🔧 Funcionalidades del sistema
 
+El sistema permite gestionar el ciclo de vida del anteproyecto mediante una API REST, que a su vez invoca funciones del chaincode desplegado en Hyperledger Fabric.
+
+A continuación se describen las operaciones disponibles y su correspondencia interna:
+
+---
+
 ### 📤 Envío de anteproyecto
 
-Permite subir un PDF:
+Permite al alumno subir un documento PDF.
 
 - Se almacena en IPFS  
 - Se genera un CID  
-- Se crea una nueva versión en blockchain  
-- Estado inicial: ENTREGADO  
+- Se registra como una nueva versión en blockchain  
+- Estado inicial: `ENTREGADO`  
 
-Endpoint:
+**Endpoint:**
 
 POST /anteproyecto/submit-file  
+
+**Función en chaincode:**
+
+submitAnteproyecto(tfgId, cid, url)
 
 ---
 
 ### ✏️ Solicitar modificación
 
-Permite solicitar cambios:
+Permite al tutor solicitar cambios sobre una versión concreta.
 
-- Cambia el estado a MODIFICACION  
-- Se añade comentario  
-- Se registra en blockchain  
+- Cambia el estado a `MODIFICACION`  
+- Se añade un comentario  
+- Se registra de forma inmutable  
 
-Endpoint:
+**Endpoint:**
 
 POST /anteproyecto/modification  
+
+**Función en chaincode:**
+
+requestModification(tfgId, version, comentario)
 
 ---
 
 ### ✅ Aceptar anteproyecto
 
-Permite validar una versión:
+Permite validar una versión concreta.
 
-- Cambia el estado a ACEPTADO  
+- Cambia el estado a `ACEPTADO`  
+- Se registra en blockchain  
 
-Endpoint:
+**Endpoint:**
 
 POST /anteproyecto/accept  
+
+**Función en chaincode:**
+
+acceptAnteproyecto(tfgId, version)
 
 ---
 
 ### 🔍 Consultar última versión
 
+Permite obtener la versión más reciente de un TFG.
+
+**Endpoint:**
+
 GET /anteproyecto/{tfgId}/latest  
+
+**Función en chaincode:**
+
+queryLatestVersion(tfgId)
 
 ---
 
 ### 📚 Listar versiones
 
+Permite obtener el histórico completo de versiones.
+
+**Endpoint:**
+
 GET /anteproyecto/{tfgId}/versions  
+
+**Función en chaincode:**
+
+listVersions(tfgId)
 
 ---
 
 ### 📄 Consultar versión concreta
 
+Permite recuperar una versión específica.
+
+**Endpoint:**
+
 GET /anteproyecto/{tfgId}/{version}  
 
+**Función en chaincode:**
+
+queryAnteproyecto(tfgId, version)
 ---
 
 ## 🧪 Ejemplo de uso
