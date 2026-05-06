@@ -3,9 +3,12 @@
 const { Contract } = require('fabric-contract-api');
 
 class AnteproyectoContract extends Contract {
-    // Helpers para claves
     _latestVersionKey(tfgId) {
         return `${tfgId}:latestVersion`;
+    }
+
+    _versionsListKey(tfgId) {
+        return `${tfgId}:versions`;
     }
 
     _versionKey(tfgId, version) {
@@ -13,38 +16,105 @@ class AnteproyectoContract extends Contract {
     }
 
     async _getLatestVersion(ctx, tfgId) {
-        const versionKey = this._latestVersionKey(tfgId);
-        const data = await ctx.stub.getState(versionKey);
+        const data = await ctx.stub.getState(this._latestVersionKey(tfgId));
 
         if (!data || data.length === 0) {
-            return 0; // aún no hay versiones
+            return null;
         }
+
         const parsed = JSON.parse(data.toString());
-        return Number(parsed.latestVersion || 0);
+        return parsed.latestVersion || null;
     }
 
     async _setLatestVersion(ctx, tfgId, version) {
-        const versionKey = this._latestVersionKey(tfgId);
         await ctx.stub.putState(
-            versionKey,
-            Buffer.from(JSON.stringify({ latestVersion: Number(version) }))
+            this._latestVersionKey(tfgId),
+            Buffer.from(JSON.stringify({ latestVersion: version }))
         );
     }
 
-    // 1) Entrega (o re-entrega) -> crea nueva versión
-    async submitAnteproyecto(ctx, tfgId, cid, url) {
-        const latest = await this._getLatestVersion(ctx, tfgId);
-        const newVersion = latest + 1;
+    async _getVersionsList(ctx, tfgId) {
+        const data = await ctx.stub.getState(this._versionsListKey(tfgId));
 
+        if (!data || data.length === 0) {
+            return [];
+        }
+
+        const parsed = JSON.parse(data.toString());
+        return parsed.versions || [];
+    }
+
+    async _addVersionToList(ctx, tfgId, version) {
+        const versions = await this._getVersionsList(ctx, tfgId);
+
+        if (!versions.includes(version)) {
+            versions.push(version);
+        }
+
+        await ctx.stub.putState(
+            this._versionsListKey(tfgId),
+            Buffer.from(JSON.stringify({ versions }))
+        );
+    }
+
+    async _calculateNextVersion(ctx, tfgId) {
+        const latestVersion = await this._getLatestVersion(ctx, tfgId);
+
+        if (!latestVersion) {
+            return '0.1';
+        }
+
+        const latestKey = this._versionKey(tfgId, latestVersion);
+        const latestData = await ctx.stub.getState(latestKey);
+
+        if (!latestData || latestData.length === 0) {
+            throw new Error(`No existe la última versión registrada: ${latestVersion}`);
+        }
+
+        const latestAnteproyecto = JSON.parse(latestData.toString());
+
+        if (latestVersion.startsWith('0.')) {
+            if (latestAnteproyecto.estado === 'ACEPTADO') {
+                return '1.0';
+            }
+
+            const parts = latestVersion.split('.');
+            const minor = Number(parts[1]);
+
+            if (Number.isNaN(minor)) {
+                throw new Error(`Formato de versión no válido: ${latestVersion}`);
+            }
+
+            return `0.${minor + 1}`;
+        }
+
+        if (latestVersion === '1.0') {
+            return '2.0';
+        }
+
+        if (latestVersion === '2.0') {
+            throw new Error('El ciclo del TFG ya está cerrado. No se pueden registrar más entregas.');
+        }
+
+        throw new Error(`Formato de versión no reconocido: ${latestVersion}`);
+    }
+
+    _getTimestamp(ctx) {
         const ts = ctx.stub.getTxTimestamp();
-	const millis = ts.seconds.low * 1000 + Math.floor(ts.nanos / 1e6);
-	const timestamp = new Date(millis).toISOString();
+        const millis = ts.seconds.low * 1000 + Math.floor(ts.nanos / 1e6);
+        return new Date(millis).toISOString();
+    }
 
+    async submitAnteproyecto(ctx, tfgId, cid, url) {
+        const newVersion = await this._calculateNextVersion(ctx, tfgId);
+        const timestamp = this._getTimestamp(ctx);
+
+        const estado = newVersion === '2.0' ? 'CALIFICADO' : 'ENTREGADO';
 
         const anteproyecto = {
             tfgId,
             version: newVersion,
-            estado: 'ENTREGADO',
+            estado,
             cid,
             url,
             timestamp
@@ -52,19 +122,17 @@ class AnteproyectoContract extends Contract {
 
         const anteproyectoKey = this._versionKey(tfgId, newVersion);
 
-        // Guarda la nueva versión
         await ctx.stub.putState(
             anteproyectoKey,
             Buffer.from(JSON.stringify(anteproyecto))
         );
 
-        // Actualiza puntero a última versión
         await this._setLatestVersion(ctx, tfgId, newVersion);
+        await this._addVersionToList(ctx, tfgId, newVersion);
 
         return JSON.stringify(anteproyecto);
     }
 
-    // 2) Solicitar modificación sobre una versión concreta
     async requestModification(ctx, tfgId, version, comentario) {
         const anteproyectoKey = this._versionKey(tfgId, version);
         const data = await ctx.stub.getState(anteproyectoKey);
@@ -75,17 +143,13 @@ class AnteproyectoContract extends Contract {
 
         const anteproyecto = JSON.parse(data.toString());
 
-        // Reglas de transición
         if (anteproyecto.estado !== 'ENTREGADO') {
             throw new Error(`No se puede pedir modificación: estado actual = ${anteproyecto.estado}`);
         }
 
         anteproyecto.estado = 'MODIFICACION';
         anteproyecto.comentario = comentario || '';
-        const ts = ctx.stub.getTxTimestamp();
-	const millis = ts.seconds.low * 1000 + Math.floor(ts.nanos / 1e6);
-	anteproyecto.timestamp = new Date(millis).toISOString();
-
+        anteproyecto.timestamp = this._getTimestamp(ctx);
 
         await ctx.stub.putState(
             anteproyectoKey,
@@ -95,7 +159,6 @@ class AnteproyectoContract extends Contract {
         return JSON.stringify(anteproyecto);
     }
 
-    // 3) Aceptar una versión concreta
     async acceptAnteproyecto(ctx, tfgId, version) {
         const anteproyectoKey = this._versionKey(tfgId, version);
         const data = await ctx.stub.getState(anteproyectoKey);
@@ -106,16 +169,12 @@ class AnteproyectoContract extends Contract {
 
         const anteproyecto = JSON.parse(data.toString());
 
-        // Reglas de transición
         if (anteproyecto.estado !== 'ENTREGADO') {
             throw new Error(`No se puede aceptar: estado actual = ${anteproyecto.estado}`);
         }
 
         anteproyecto.estado = 'ACEPTADO';
-        const ts = ctx.stub.getTxTimestamp();
-	const millis = ts.seconds.low * 1000 + Math.floor(ts.nanos / 1e6);
-	anteproyecto.timestamp = new Date(millis).toISOString();
-
+        anteproyecto.timestamp = this._getTimestamp(ctx);
 
         await ctx.stub.putState(
             anteproyectoKey,
@@ -125,7 +184,6 @@ class AnteproyectoContract extends Contract {
         return JSON.stringify(anteproyecto);
     }
 
-    // 4) Consultar una versión concreta
     async queryAnteproyecto(ctx, tfgId, version) {
         const anteproyectoKey = this._versionKey(tfgId, version);
         const data = await ctx.stub.getState(anteproyectoKey);
@@ -137,28 +195,29 @@ class AnteproyectoContract extends Contract {
         return data.toString();
     }
 
-    // 5) Consultar última versión (metadato)
     async queryLatestVersion(ctx, tfgId) {
         const latest = await this._getLatestVersion(ctx, tfgId);
         return JSON.stringify({ tfgId, latestVersion: latest });
     }
 
-    // 6) Listar todas las versiones (1..latest)
-    // Nota: esto recorre versiones conocidas, no hace "scan" del ledger.
     async listVersions(ctx, tfgId) {
-        const latest = await this._getLatestVersion(ctx, tfgId);
-        if (latest === 0) {
+        const versions = await this._getVersionsList(ctx, tfgId);
+
+        if (!versions.length) {
             return JSON.stringify([]);
         }
 
         const all = [];
-        for (let v = 1; v <= latest; v++) {
-            const key = this._versionKey(tfgId, v);
+
+        for (const version of versions) {
+            const key = this._versionKey(tfgId, version);
             const data = await ctx.stub.getState(key);
+
             if (data && data.length > 0) {
                 all.push(JSON.parse(data.toString()));
             }
         }
+
         return JSON.stringify(all);
     }
 }

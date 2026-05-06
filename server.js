@@ -22,12 +22,12 @@ async function getIpfsClient() {
   return _ipfsClient;
 }
 
-
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
-app.post('/anteproyecto/submit-file', upload.single('file'), async (req, res) => {
+
+app.post('/tfg/submit-file', upload.single('file'), async (req, res) => {
   try {
     const tfgId = req.body.tfgId;
     if (!tfgId) return res.status(400).json({ error: 'Missing tfgId' });
@@ -35,15 +35,13 @@ app.post('/anteproyecto/submit-file', upload.single('file'), async (req, res) =>
 
     const ipfs = await getIpfsClient();
 
-    // 1) Subir a IPFS
     const added = await ipfs.add({
       content: req.file.buffer,
     });
 
     const cid = added.cid.toString();
-    const url = `https://ipfs.io/ipfs/${cid}`; // para demo; luego puedes usar gateway local
+    const url = `https://ipfs.io/ipfs/${cid}`;
 
-    // 2) Registrar en Fabric
     const out = await submitTransaction('submitAnteproyecto', [tfgId, cid, url]);
 
     res.json(out);
@@ -52,12 +50,13 @@ app.post('/anteproyecto/submit-file', upload.single('file'), async (req, res) =>
   }
 });
 
-app.post('/anteproyecto/submit', async (req, res) => {
+app.post('/tfg/submit', async (req, res) => {
   try {
     const { tfgId, cid, url } = req.body;
     if (!tfgId || !cid || !url) {
       return res.status(400).json({ error: 'Missing tfgId/cid/url' });
     }
+
     const out = await submitTransaction('submitAnteproyecto', [tfgId, cid, url]);
     res.json(out);
   } catch (e) {
@@ -65,29 +64,32 @@ app.post('/anteproyecto/submit', async (req, res) => {
   }
 });
 
-app.post('/anteproyecto/modification', async (req, res) => {
+app.post('/tfg/modification', async (req, res) => {
   try {
     const { tfgId, version, comentario } = req.body;
     if (!tfgId || version === undefined) {
       return res.status(400).json({ error: 'Missing tfgId/version' });
     }
+
     const out = await submitTransaction('requestModification', [
       tfgId,
       String(version),
       comentario || '',
     ]);
+
     res.json(out);
   } catch (e) {
     res.status(500).json({ error: e.message || String(e) });
   }
 });
 
-app.post('/anteproyecto/accept', async (req, res) => {
+app.post('/tfg/accept', async (req, res) => {
   try {
     const { tfgId, version } = req.body;
     if (!tfgId || version === undefined) {
       return res.status(400).json({ error: 'Missing tfgId/version' });
     }
+
     const out = await submitTransaction('acceptAnteproyecto', [tfgId, String(version)]);
     res.json(out);
   } catch (e) {
@@ -95,7 +97,7 @@ app.post('/anteproyecto/accept', async (req, res) => {
   }
 });
 
-app.get('/anteproyecto/:tfgId/latest', async (req, res) => {
+app.get('/tfg/:tfgId/latest', async (req, res) => {
   try {
     const out = await evaluateTransaction('queryLatestVersion', [req.params.tfgId]);
     res.json(out);
@@ -104,7 +106,7 @@ app.get('/anteproyecto/:tfgId/latest', async (req, res) => {
   }
 });
 
-app.get('/anteproyecto/:tfgId/versions', async (req, res) => {
+app.get('/tfg/:tfgId/versions', async (req, res) => {
   try {
     const out = await evaluateTransaction('listVersions', [req.params.tfgId]);
     res.json(out);
@@ -113,12 +115,13 @@ app.get('/anteproyecto/:tfgId/versions', async (req, res) => {
   }
 });
 
-app.get('/anteproyecto/:tfgId/:version', async (req, res) => {
+app.get('/tfg/:tfgId/:version', async (req, res) => {
   try {
     const out = await evaluateTransaction('queryAnteproyecto', [
       req.params.tfgId,
       String(req.params.version),
     ]);
+
     res.json(out);
   } catch (e) {
     res.status(500).json({ error: e.message || String(e) });
